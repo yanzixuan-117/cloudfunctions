@@ -22,54 +22,42 @@ exports.main = async (event, context) => {
       where.status = status
     }
 
-    // 查询教练列表
+    // 查询教练列表（按order字段排序）
     const res = await db.collection('coaches')
       .where(where)
-      .orderBy('createTime', 'desc')
+      .orderBy('order', 'asc')
       .get()
 
     console.log('查询到', res.data.length, '个教练')
 
-    // 处理头像URL：将云存储URL转换为临时URL（服务端处理）
-    const coaches = await Promise.all(res.data.map(async (coach) => {
-      // 保存原始云存储URL
-      const cloudUrl = coach.cloudAvatarUrl || coach.avatarUrl
+    // 处理头像URL：确保返回云存储URL
+    const coaches = res.data.map(coach => {
+      const avatarUrl = coach.avatarUrl || ''
+      const cloudAvatarUrl = coach.cloudAvatarUrl || ''
 
-      if (cloudUrl && cloudUrl.startsWith('cloud://')) {
-        try {
-          console.log('处理教练头像:', coach.name, cloudUrl)
-          const tempFileRes = await cloud.getTempFileURL({
-            fileList: [cloudUrl]
-          })
+      // 判断是否为云存储URL或临时URL
+      const isCloudUrl = avatarUrl && avatarUrl.startsWith('cloud://')
+      const isTempUrl = avatarUrl && avatarUrl.startsWith('https://') && avatarUrl.includes('sign=')
+      const isCloudAvatarUrl = cloudAvatarUrl && cloudAvatarUrl.startsWith('cloud://')
+      const isCloudAvatarTempUrl = cloudAvatarUrl && cloudAvatarUrl.startsWith('https://') && cloudAvatarUrl.includes('sign=')
 
-          if (tempFileRes.fileList && tempFileRes.fileList[0]) {
-            const fileData = tempFileRes.fileList[0]
-            if (fileData.status === 0 && fileData.tempFileURL) {
-              console.log('✓ 成功转换:', coach.name, fileData.tempFileURL)
-              // 返回临时URL用于显示
-              coach.avatarUrl = fileData.tempFileURL
-              // 同时返回原始云存储URL用于刷新
-              coach.cloudAvatarUrl = cloudUrl
-            } else {
-              console.warn('✗ 转换失败(status:', fileData.status, '):', coach.name)
-              // 失败时使用原始URL
-              coach.avatarUrl = cloudUrl
-              coach.cloudAvatarUrl = cloudUrl
-            }
-          }
-        } catch (err) {
-          console.error('获取临时URL失败:', coach.name, err)
-          // 失败时使用原始URL
-          coach.avatarUrl = cloudUrl
-          coach.cloudAvatarUrl = cloudUrl
-        }
-      } else if (!coach.cloudAvatarUrl) {
-        // 如果没有云存储URL，确保有cloudAvatarUrl字段
-        coach.cloudAvatarUrl = coach.avatarUrl || ''
+      // 逻辑：优先使用云存储URL（cloud://开头），避免临时URL
+      if (isCloudUrl) {
+        // avatarUrl是云存储URL，确保cloudAvatarUrl也是云存储URL
+        coach.cloudAvatarUrl = avatarUrl
+        coach.avatarUrl = avatarUrl
+      } else if (isCloudAvatarUrl) {
+        // cloudAvatarUrl是云存储URL，使用它
+        coach.avatarUrl = cloudAvatarUrl
+      } else if (isTempUrl || isCloudAvatarTempUrl) {
+        // 如果是临时URL，清空并使用默认头像
+        console.warn('教练头像URL是临时URL，需要重新上传:', coach.name)
+        coach.cloudAvatarUrl = ''
+        coach.avatarUrl = ''
       }
 
       return coach
-    }))
+    })
 
     console.log('=== 获取教练列表成功 ===')
 

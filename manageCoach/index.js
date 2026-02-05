@@ -76,23 +76,34 @@ async function getCoachList() {
     .orderBy('createTime', 'desc')
     .get()
 
-  // 处理头像URL：将云存储URL转换为临时URL
-  const coaches = await Promise.all(res.data.map(async (coach) => {
-    if (coach.avatarUrl && coach.avatarUrl.startsWith('cloud://')) {
-      try {
-        const tempFileRes = await cloud.getTempFileURL({
-          fileList: [coach.avatarUrl]
-        })
-        if (tempFileRes.fileList && tempFileRes.fileList[0] && tempFileRes.fileList[0].tempFileURL) {
-          coach.avatarUrl = tempFileRes.fileList[0].tempFileURL
-        }
-      } catch (err) {
-        console.error('获取临时URL失败:', coach.name, err)
-        // 保留原URL，前端会显示默认头像
-      }
+  // 处理头像URL：确保返回云存储URL
+  const coaches = res.data.map(coach => {
+    const avatarUrl = coach.avatarUrl || ''
+    const cloudAvatarUrl = coach.cloudAvatarUrl || ''
+
+    // 判断是否为云存储URL或临时URL
+    const isCloudUrl = avatarUrl && avatarUrl.startsWith('cloud://')
+    const isTempUrl = avatarUrl && avatarUrl.startsWith('https://') && avatarUrl.includes('sign=')
+    const isCloudAvatarUrl = cloudAvatarUrl && cloudAvatarUrl.startsWith('cloud://')
+    const isCloudAvatarTempUrl = cloudAvatarUrl && cloudAvatarUrl.startsWith('https://') && cloudAvatarUrl.includes('sign=')
+
+    // 逻辑：优先使用云存储URL（cloud://开头），避免临时URL
+    if (isCloudUrl) {
+      // avatarUrl是云存储URL，确保cloudAvatarUrl也是云存储URL
+      coach.cloudAvatarUrl = avatarUrl
+      coach.avatarUrl = avatarUrl
+    } else if (isCloudAvatarUrl) {
+      // cloudAvatarUrl是云存储URL，使用它
+      coach.avatarUrl = cloudAvatarUrl
+    } else if (isTempUrl || isCloudAvatarTempUrl) {
+      // 如果是临时URL，清空并使用默认头像
+      console.warn('教练头像URL是临时URL，需要重新上传:', coach.name)
+      coach.cloudAvatarUrl = ''
+      coach.avatarUrl = ''
     }
+
     return coach
-  }))
+  })
 
   return {
     success: true,
@@ -114,19 +125,29 @@ async function getCoach(coachId) {
 
   const coach = res.data
 
-  // 处理头像URL：将云存储URL转换为临时URL
-  if (coach.avatarUrl && coach.avatarUrl.startsWith('cloud://')) {
-    try {
-      const tempFileRes = await cloud.getTempFileURL({
-        fileList: [coach.avatarUrl]
-      })
-      if (tempFileRes.fileList && tempFileRes.fileList[0] && tempFileRes.fileList[0].tempFileURL) {
-        coach.avatarUrl = tempFileRes.fileList[0].tempFileURL
-      }
-    } catch (err) {
-      console.error('获取教练头像临时URL失败:', coach.name, err)
-      // 保留原URL，前端会显示默认头像
-    }
+  // 处理头像URL：确保返回云存储URL
+  const avatarUrl = coach.avatarUrl || ''
+  const cloudAvatarUrl = coach.cloudAvatarUrl || ''
+
+  // 判断是否为云存储URL或临时URL
+  const isCloudUrl = avatarUrl && avatarUrl.startsWith('cloud://')
+  const isTempUrl = avatarUrl && avatarUrl.startsWith('https://') && avatarUrl.includes('sign=')
+  const isCloudAvatarUrl = cloudAvatarUrl && cloudAvatarUrl.startsWith('cloud://')
+  const isCloudAvatarTempUrl = cloudAvatarUrl && cloudAvatarUrl.startsWith('https://') && cloudAvatarUrl.includes('sign=')
+
+  // 逻辑：优先使用云存储URL（cloud://开头），避免临时URL
+  if (isCloudUrl) {
+    // avatarUrl是云存储URL，确保cloudAvatarUrl也是云存储URL
+    coach.cloudAvatarUrl = avatarUrl
+    coach.avatarUrl = avatarUrl
+  } else if (isCloudAvatarUrl) {
+    // cloudAvatarUrl是云存储URL，使用它
+    coach.avatarUrl = cloudAvatarUrl
+  } else if (isTempUrl || isCloudAvatarTempUrl) {
+    // 如果是临时URL，清空并使用默认头像
+    console.warn('教练头像URL是临时URL，需要重新上传:', coach.name)
+    coach.cloudAvatarUrl = ''
+    coach.avatarUrl = ''
   }
 
   return {
@@ -173,12 +194,17 @@ async function addCoach(userId, coachData) {
 
   const user = userRes.data[0]
 
+  // 获取当前教练数量，用于设置排序
+  const coachesCountRes = await db.collection('coaches').count()
+  const currentOrder = coachesCountRes.total || 0
+
   // 创建教练记录
   const data = {
     _openid: userId,
     name: coachData?.name || user.nickname || '',
     nickname: user.nickname || '',
     avatarUrl: coachData?.avatarUrl || user.avatarUrl || '',
+    cloudAvatarUrl: coachData?.avatarUrl || user.avatarUrl || '',  // 保存原始云存储URL
     phone: coachData?.phone || user.phone || '',
     specialty: coachData?.specialty || [],
     introduction: coachData?.introduction || '暂无简介',
@@ -188,6 +214,7 @@ async function addCoach(userId, coachData) {
     reviewCount: 0,
     availableSlots: coachData?.availableSlots || [],
     status: coachData?.status !== undefined ? coachData.status : 1,
+    order: currentOrder,  // 设置排序值
     createTime: db.serverDate(),
     updateTime: db.serverDate()
   }
@@ -240,9 +267,9 @@ async function updateCoach(coachId, coachData) {
 
   // 允许更新的字段
   const allowedFields = [
-    'name', 'avatarUrl', 'phone', 'specialty',
+    'name', 'avatarUrl', 'cloudAvatarUrl', 'phone', 'specialty',
     'introduction', 'experience', 'certifications',
-    'availableSlots', 'status', 'price'
+    'availableSlots', 'status', 'price', 'order'
   ]
 
   allowedFields.forEach(field => {
@@ -323,23 +350,28 @@ async function getUserList() {
     })
     .get()
 
-  // 处理头像URL：将云存储URL转换为临时URL
-  const users = await Promise.all(res.data.map(async (user) => {
-    if (user.avatarUrl && user.avatarUrl.startsWith('cloud://')) {
-      try {
-        const tempFileRes = await cloud.getTempFileURL({
-          fileList: [user.avatarUrl]
-        })
-        if (tempFileRes.fileList && tempFileRes.fileList[0] && tempFileRes.fileList[0].tempFileURL) {
-          user.avatarUrl = tempFileRes.fileList[0].tempFileURL
-        }
-      } catch (err) {
-        console.error('获取用户临时URL失败:', user.nickname, err)
-        // 保留原URL，前端会显示默认头像
-      }
+  // 获取所有教练的openid列表
+  const coachesRes = await db.collection('coaches')
+    .field({
+      _openid: true
+    })
+    .get()
+
+  const coachOpenids = new Set(coachesRes.data.map(c => c._openid))
+
+  // 处理用户数据：检查角色并返回
+  const users = res.data.map(user => {
+    // 检查用户是否真的是教练（在coaches表中有记录）
+    // 如果users表显示role为coach，但coaches表中没有记录，则修正为student
+    const isActuallyCoach = coachOpenids.has(user._openid)
+    const effectiveRole = isActuallyCoach ? 'coach' : 'student'
+
+    // 返回用户数据，使用修正后的角色
+    return {
+      ...user,
+      role: effectiveRole
     }
-    return user
-  }))
+  })
 
   return {
     success: true,
@@ -363,18 +395,29 @@ async function getCoachByOpenid(openid) {
 
   const coach = res.data[0]
 
-  // 处理头像URL：将云存储URL转换为临时URL
-  if (coach.avatarUrl && coach.avatarUrl.startsWith('cloud://')) {
-    try {
-      const tempFileRes = await cloud.getTempFileURL({
-        fileList: [coach.avatarUrl]
-      })
-      if (tempFileRes.fileList && tempFileRes.fileList[0] && tempFileRes.fileList[0].tempFileURL) {
-        coach.avatarUrl = tempFileRes.fileList[0].tempFileURL
-      }
-    } catch (err) {
-      console.error('获取教练头像临时URL失败:', coach.name, err)
-    }
+  // 处理头像URL：确保返回云存储URL
+  const avatarUrl = coach.avatarUrl || ''
+  const cloudAvatarUrl = coach.cloudAvatarUrl || ''
+
+  // 判断是否为云存储URL或临时URL
+  const isCloudUrl = avatarUrl && avatarUrl.startsWith('cloud://')
+  const isTempUrl = avatarUrl && avatarUrl.startsWith('https://') && avatarUrl.includes('sign=')
+  const isCloudAvatarUrl = cloudAvatarUrl && cloudAvatarUrl.startsWith('cloud://')
+  const isCloudAvatarTempUrl = cloudAvatarUrl && cloudAvatarUrl.startsWith('https://') && cloudAvatarUrl.includes('sign=')
+
+  // 逻辑：优先使用云存储URL（cloud://开头），避免临时URL
+  if (isCloudUrl) {
+    // avatarUrl是云存储URL，确保cloudAvatarUrl也是云存储URL
+    coach.cloudAvatarUrl = avatarUrl
+    coach.avatarUrl = avatarUrl
+  } else if (isCloudAvatarUrl) {
+    // cloudAvatarUrl是云存储URL，使用它
+    coach.avatarUrl = cloudAvatarUrl
+  } else if (isTempUrl || isCloudAvatarTempUrl) {
+    // 如果是临时URL，清空并使用默认头像
+    console.warn('教练头像URL是临时URL，需要重新上传:', coach.name)
+    coach.cloudAvatarUrl = ''
+    coach.avatarUrl = ''
   }
 
   return {

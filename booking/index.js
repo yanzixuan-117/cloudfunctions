@@ -103,6 +103,44 @@ async function confirmBooking(booking, openid) {
     }
   })
 
+  // 发送订阅消息给学员（异步，不阻塞）
+  try {
+    const studentOpenid = booking.studentId
+    console.log('准备发送确认通知给学员')
+    console.log('学员openid:', studentOpenid)
+    console.log('模板ID: 0zah2JhpFWROpt-yud34i9JIyLdubNoTMf8jo7km9N8')
+
+    if (studentOpenid) {
+      await cloud.openapi.subscribeMessage.send({
+        touser: studentOpenid,
+        templateId: '0zah2JhpFWROpt-yud34i9JIyLdubNoTMf8jo7km9N8', // 预约已确认
+        page: `pages/booking/manage?bookingId=${booking._id}`,
+        data: {
+          time1: { // 课程开始时间（time类型，只传时间点）
+            value: booking.startTime
+          },
+          thing2: { // 课程教练
+            value: coachRes.data.name
+          },
+          short_thing3: { // 课程时长
+            value: '60分钟'
+          },
+          thing4: { // 上课地点（只传地点，不超过20字符）
+            value: booking.venue || '未指定'
+          }
+        }
+      }).catch(err => {
+        console.log('发送学员订阅消息失败（不影响操作）:', err.message)
+      })
+
+      console.log('学员确认通知发送完成')
+    } else {
+      console.log('学员openid为空，无法发送通知')
+    }
+  } catch (msgErr) {
+    console.log('发送学员订阅消息异常（不影响操作）:', msgErr.message)
+  }
+
   return {
     success: true,
     message: '已确认预约'
@@ -145,6 +183,48 @@ async function rejectBooking(booking, openid, rejectReason) {
       confirmTime: db.serverDate()
     }
   })
+
+  // 发送订阅消息给学员（异步，不阻塞）
+  try {
+    const studentOpenid = booking.studentId
+    console.log('准备发送拒绝通知给学员')
+    console.log('学员openid:', studentOpenid)
+    console.log('模板ID: 5vb0wANKEONrKQ_oTAIFFSTSpXcC8y7y6sGDu2Tp8Ik')
+    console.log('拒绝原因:', rejectReason || '教练暂时无法安排')
+
+    if (studentOpenid) {
+      await cloud.openapi.subscribeMessage.send({
+        touser: studentOpenid,
+        templateId: '5vb0wANKEONrKQ_oTAIFFSTSpXcC8y7y6sGDu2Tp8Ik', // 预约已拒绝
+        page: `pages/booking/my-bookings`,
+        data: {
+          thing1: { // 上课场馆（只传场馆名称）
+            value: booking.venue || '未指定'
+          },
+          time2: { // 上课时间（time类型，只传开始时间点）
+            value: booking.startTime
+          },
+          thing3: { // 课程名称
+            value: '网球课程'
+          },
+          thing4: { // 上课老师
+            value: coachRes.data.name
+          },
+          thing5: { // 失败原因
+            value: rejectReason || '教练暂时无法安排'
+          }
+        }
+      }).catch(err => {
+        console.log('发送学员订阅消息失败（不影响操作）:', err.message)
+      })
+
+      console.log('学员拒绝通知发送完成')
+    } else {
+      console.log('学员openid为空，无法发送通知')
+    }
+  } catch (msgErr) {
+    console.log('发送学员订阅消息异常（不影响操作）:', msgErr.message)
+  }
 
   return {
     success: true,
@@ -195,6 +275,42 @@ async function cancelBooking(booking, openid) {
     }
   })
 
+  // 发送订阅消息给教练（异步，不阻塞）
+  try {
+    const coachRes = await db.collection('coaches').doc(booking.coachId).get()
+    if (coachRes.data && coachRes.data._openid) {
+      // 获取学员信息
+      const studentRes = await db.collection('users').where({
+        _openid: db.command.eq(booking.studentId)
+      }).get()
+      const student = studentRes.data[0] || {}
+
+      await cloud.openapi.subscribeMessage.send({
+        touser: coachRes.data._openid,
+        templateId: 'ZK-LyT1dghS8lT_c5j3y7QS3p_GiKhXoWIHmovPbFi4', // 预约已取消
+        page: `pages/booking/coach-list`,
+        data: {
+          thing3: { // 预约项目
+            value: '网球课程'
+          },
+          name4: { // 预约人
+            value: student.nickName || '学员'
+          },
+          thing12: { // 上课地址（包含时间）
+            value: `${booking.venue || '未指定'} ${booking.startTime}-${booking.endTime}`
+          },
+          date13: { // 上课日期（纯日期格式）
+            value: booking.date
+          }
+        }
+      }).catch(err => {
+        console.log('发送教练订阅消息失败（不影响操作）:', err.message)
+      })
+    }
+  } catch (msgErr) {
+    console.log('发送教练订阅消息异常（不影响操作）:', msgErr.message)
+  }
+
   return {
     success: true,
     message: '已取消预约'
@@ -236,6 +352,45 @@ async function completeBooking(booking, openid) {
       completeTime: db.serverDate()
     }
   })
+
+  // 发送订阅消息给学员（异步，不阻塞）
+  try {
+    const studentOpenid = booking.studentId
+    if (studentOpenid) {
+      // 获取学员信息
+      const studentRes = await db.collection('users').where({
+        _openid: db.command.eq(booking.studentId)
+      }).get()
+      const student = studentRes.data && studentRes.data.length > 0 ? studentRes.data[0] : {}
+
+      await cloud.openapi.subscribeMessage.send({
+        touser: studentOpenid,
+        templateId: 'lw0LVJhfyaZwIR0FFVcmMMZjrFBtlOngUrK-BJpnC6Y', // 预约已完成
+        page: `pages/booking/manage?bookingId=${booking._id}`,
+        data: {
+          thing2: { // 学员姓名
+            value: student.nickName || '学员'
+          },
+          thing6: { // 课程名称
+            value: '网球课程'
+          },
+          time7: { // 上课时间（time类型，只传开始时间点）
+            value: booking.startTime
+          },
+          thing8: { // 教练
+            value: coachRes.data.name
+          },
+          thing9: { // 上课地址（只传地点名称）
+            value: booking.venue || '未指定'
+          }
+        }
+      }).catch(err => {
+        console.log('发送学员订阅消息失败（不影响操作）:', err.message)
+      })
+    }
+  } catch (msgErr) {
+    console.log('发送学员订阅消息异常（不影响操作）:', msgErr.message)
+  }
 
   return {
     success: true,
