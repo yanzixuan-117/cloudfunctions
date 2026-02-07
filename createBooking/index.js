@@ -44,6 +44,79 @@ exports.main = async (event, context) => {
 
     console.log('教练信息:', coach.name)
 
+    // 1.5. 检查固定预约冲突
+    // 将日期转换为星期几 (0-6, 0=周日)
+    const targetDate = new Date(date)
+    const weekday = targetDate.getDay()
+
+    console.log('检查星期:', weekday, '固定预约冲突')
+
+    // 查找该星期、该时间段的所有启用固定预约
+    const fixedBookingsRes = await db.collection('fixedBookings')
+      .where({
+        weekday: weekday,
+        startTime: startTime,
+        endTime: endTime,
+        status: 1
+      })
+      .get()
+
+    if (fixedBookingsRes.data && fixedBookingsRes.data.length > 0) {
+      console.log('找到该时间段的固定预约:', fixedBookingsRes.data.length)
+
+      // 检查是否有教练冲突
+      const coachFixedConflict = fixedBookingsRes.data.find(fb => {
+        // 检查有效期
+        if (fb.validUntil) {
+          const validUntil = new Date(fb.validUntil)
+          if (targetDate > validUntil) {
+            return false // 已过期，不冲突
+          }
+        }
+        // 检查教练是否冲突
+        const coachConflict = fb.coachId === coachId
+        if (coachConflict) {
+          console.log(`教练冲突: ${fb.coachId}`)
+        }
+        return coachConflict
+      })
+
+      if (coachFixedConflict) {
+        console.log('与固定预约的教练冲突')
+        return {
+          success: false,
+          message: '该教练该时段已被固定预约占用，请选择其他时间'
+        }
+      }
+
+      // 检查是否有球馆冲突
+      if (venueId) {
+        const venueFixedConflict = fixedBookingsRes.data.find(fb => {
+          // 检查有效期
+          if (fb.validUntil) {
+            const validUntil = new Date(fb.validUntil)
+            if (targetDate > validUntil) {
+              return false // 已过期，不冲突
+            }
+          }
+          // 检查球馆是否冲突
+          const venueConflict = fb.venueId === venueId
+          if (venueConflict) {
+            console.log(`球馆冲突: ${fb.venueId}`)
+          }
+          return venueConflict
+        })
+
+        if (venueFixedConflict) {
+          console.log('与固定预约的球馆冲突')
+          return {
+            success: false,
+            message: `该球馆该时段已被固定预约占用，请选择其他时间或球馆`
+          }
+        }
+      }
+    }
+
     // 2. 检查教练在该时间段是否已被预约
     const coachConflictRes = await db.collection('bookings')
       .where({
@@ -65,7 +138,7 @@ exports.main = async (event, context) => {
     // 3. 检查球馆在该时间段是否已被预约
     const venueConflictRes = await db.collection('bookings')
       .where({
-        venue: venue,
+        venueId: venueId,
         date: date,
         startTime: startTime,
         status: dbCmd.in(['pending', 'confirmed'])

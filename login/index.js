@@ -17,9 +17,10 @@ exports.main = async (event, context) => {
   const wxContext = cloud.getWXContext()
   const { userInfo, selectedRole } = event
 
-  // 默认所有用户角色为'student'（学员）
+  // 默认所有用户角色为'guest'（游客）
+  // 管理员需要将游客添加为学员，学员才能预约课程
   // 管理员需要在数据库中手动修改role字段为'admin'或'coach'
-  let autoRole = 'student'
+  let autoRole = 'guest'
 
   // 检查是否在管理员白名单中
   if (ADMIN_OPENIDS.includes(wxContext.OPENID)) {
@@ -79,15 +80,25 @@ exports.main = async (event, context) => {
       console.log('用户已存在，更新信息...')
       user = userRes.data[0]
 
-      // 更新昵称、头像和角色
+      // 更新昵称、头像（不强制更新角色，保留用户的现有角色）
       const updateData = {
-        role: role, // 同步更新实际角色，确保与COACH_OPENIDS保持一致
         updateTime: db.serverDate()
       }
 
-      // 如果用户没有 currentRole，则初始化为当前角色
-      if (!user.currentRole) {
-        updateData.currentRole = role
+      // 【修复】如果在白名单中但角色不是 admin，则强制修复
+      if (autoRole === 'admin' && user.role !== 'admin') {
+        console.log('检测到管理员账号角色异常，正在修复:', user.role, '-> admin')
+        updateData.role = 'admin'
+        if (!user.currentRole || user.currentRole !== 'admin') {
+          updateData.currentRole = 'admin'
+        }
+      }
+
+      // 【修复】同步 currentRole 和 role，确保显示角色与实际角色一致
+      // 如果 currentRole 不存在或与 role 不一致，则同步
+      if (!user.currentRole || user.currentRole !== user.role) {
+        console.log('同步 currentRole:', user.currentRole, '->', user.role)
+        updateData.currentRole = user.role
       }
 
       if (userInfo?.nickName) {
@@ -109,10 +120,18 @@ exports.main = async (event, context) => {
 
       user.nickname = userInfo?.nickName || user.nickname
       user.avatarUrl = userInfo?.avatarUrl || user.avatarUrl
-      user.role = role // 更新内存中的实际角色
-      user.currentRole = user.currentRole || role // 保留或初始化显示角色
 
-      console.log('更新成功，当前角色:', role)
+      // 如果修复了角色，更新内存中的用户信息
+      if (updateData.role) {
+        user.role = updateData.role
+      }
+      if (updateData.currentRole) {
+        user.currentRole = updateData.currentRole
+      } else {
+        user.currentRole = user.currentRole || user.role
+      }
+
+      console.log('更新成功，用户角色:', user.role, '显示角色:', user.currentRole)
     }
 
     // 如果是教练角色，检查教练信息

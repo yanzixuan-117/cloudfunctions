@@ -353,6 +353,51 @@ async function completeBooking(booking, openid) {
     }
   })
 
+  // 更新学员课程的已使用课次和剩余课次
+  try {
+    // 查找学员的有效课程（status为active且有剩余课次）
+    const coursesRes = await db.collection('studentCourses')
+      .where({
+        studentOpenid: booking.studentId,
+        status: 'active',
+        remainingSessions: _.gt(0)
+      })
+      .orderBy('createTime', 'asc') // 按创建时间升序，优先使用最早购买的课程
+      .get()
+
+    if (coursesRes.data && coursesRes.data.length > 0) {
+      const course = coursesRes.data[0]
+      const newUsedSessions = (course.usedSessions || 0) + 1
+      const newRemainingSessions = Math.max(0, (course.remainingSessions || 0) - 1)
+
+      // 更新课程课次
+      const updateData = {
+        usedSessions: newUsedSessions,
+        remainingSessions: newRemainingSessions,
+        updateTime: db.serverDate()
+      }
+
+      // 如果剩余课次为0，将状态设为已完成
+      if (newRemainingSessions === 0) {
+        updateData.status = 'completed'
+      }
+
+      await db.collection('studentCourses').doc(course._id).update({
+        data: updateData
+      })
+
+      console.log('已更新学员课程课次:', {
+        courseId: course._id,
+        usedSessions: newUsedSessions,
+        remainingSessions: newRemainingSessions
+      })
+    } else {
+      console.log('未找到学员的有效课程，跳过课次更新')
+    }
+  } catch (courseErr) {
+    console.error('更新学员课程课次失败（不影响完成操作）:', courseErr)
+  }
+
   // 发送订阅消息给学员（异步，不阻塞）
   try {
     const studentOpenid = booking.studentId

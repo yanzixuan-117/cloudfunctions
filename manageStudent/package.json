@@ -1,0 +1,14 @@
+{
+  "name": "manageStudent",
+  "version": "1.0.0",
+  "description": "学员管理云函数（添加为学员、课程管理、课时管理）",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

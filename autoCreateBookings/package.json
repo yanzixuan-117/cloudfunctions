@@ -1,0 +1,9 @@
+{
+  "name": "autoCreateBookings",
+  "version": "1.0.0",
+  "description": "自动创建固定预约的课程",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}
